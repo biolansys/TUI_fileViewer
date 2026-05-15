@@ -1,0 +1,4 @@
+﻿{"id":1,"name":"Alice","active":true}
+{"id":2,"name":"Bob","active":false}
+{"id":3,"name":"Carla","active":true}
+{"id":4,"name":"Diego","active":true,"roles":["admin","editor"]}

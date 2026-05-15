@@ -1,0 +1,4 @@
+﻿{"timestamp":"2026-05-15T10:21:03Z","level":"INFO","source":"app.startup","message":"Starting Files Viewer TUI"}
+{"timestamp":"2026-05-15T10:21:04Z","level":"INFO","source":"config.load","profile":"default"}
+{"timestamp":"2026-05-15T10:21:07Z","level":"WARN","source":"preview","rows":500,"cols":50}
+{"timestamp":"2026-05-15T10:21:09Z","level":"ERROR","source":"parser.csv","message":"unexpected quote","row":1829}

@@ -1,0 +1,6 @@
+﻿2026-05-15 10:21:03 INFO  app.startup        Starting Files Viewer TUI
+2026-05-15 10:21:04 INFO  config.load        Loaded config profile=default
+2026-05-15 10:21:05 WARN  file.preview       Preview truncated rows=500 cols=50 file=flights.parquet
+2026-05-15 10:21:07 ERROR parser.csv         Failed to parse row=1829 reason="unexpected quote"
+2026-05-15 10:21:08 INFO  ui.action          User opened file example.yaml
+2026-05-15 10:21:10 INFO  app.shutdown       Graceful shutdown complete

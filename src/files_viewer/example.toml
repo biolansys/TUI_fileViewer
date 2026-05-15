@@ -1,0 +1,13 @@
+﻿[app]
+name = "Files Viewer TUI"
+version = "1.0.0"
+debug = true
+
+[viewer]
+max_render_rows = 500
+max_render_cols = 50
+default_tab = "text"
+
+[theme]
+accent = "#60a5fa"
+warning = "#f59e0b"
