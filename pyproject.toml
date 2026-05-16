@@ -1,0 +1,29 @@
+[project]
+name = "files-viewer-tui"
+version = "0.1.0"
+description = "Textual TUI for viewing and editing CSV, Parquet, Arrow/Feather, and JSON files"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "textual>=0.66.0",
+  "pandas>=2.2.0",
+  "pyarrow>=16.0.0",
+  "openpyxl>=3.1.0",
+  "fastavro>=1.9.0",
+  "pypdf>=5.0.0",
+  "pillow>=10.0.0",
+  "beautifulsoup4>=4.12.0"
+]
+
+[project.scripts]
+files-viewer = "files_viewer.app:run"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
