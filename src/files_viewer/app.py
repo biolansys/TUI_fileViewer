@@ -560,6 +560,11 @@ class FilesViewerApp(App[None]):
         self.cache_hits = 0
         self.last_load_ms = 0
         self.is_page_loading = False
+        self._load_request_seq = 0
+        self._active_load_request_id = 0
+        self._lazy_page_request_seq = 0
+        self._active_lazy_page_request_id = 0
+        self.diagnostics: list[dict[str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -567,6 +572,8 @@ class FilesViewerApp(App[None]):
             yield ColoredDirectoryTree(str(self.tree_root), id="tree")
             with Vertical(id="content"):
                 with TabbedContent(id="viewer_tabs"):
+                    with TabPane("Diagnostics", id="diag_tab"):
+                        yield DataTable(id="diag_table")
                     with TabPane("DB Schema", id="db_schema_tab"):
                         yield Tree("DB Schema", id="db_schema_tree")
                     with TabPane("Table", id="table_tab"):
@@ -597,17 +604,20 @@ class FilesViewerApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one(DataTable)
+        table = self.query_one("#table", DataTable)
         schema_table = self.query_one("#schema_table", DataTable)
+        diag_table = self.query_one("#diag_table", DataTable)
         text = self.query_one(TextArea)
         filter_input = self.query_one("#table_filter_input", Input)
         table.show_cursor = True
         schema_table.show_cursor = False
+        diag_table.show_cursor = False
         text.show_line_numbers = True
         text.soft_wrap = False
         filter_input.value = ""
         self.query_one("#log_text_preview", Static).display = False
         self.query_one("#pager", Horizontal).display = False
+        self.render_diagnostics_table()
         self.update_context_shortcuts()
 
     @on(DirectoryTree.FileSelected)
@@ -618,10 +628,12 @@ class FilesViewerApp(App[None]):
         if path.suffix.lower() in PICKLE_EXTENSIONS and not self.is_pickle_loading_allowed():
             self.push_screen(ConfirmPickleScreen(), lambda ok: self.on_pickle_confirm(path, ok))
             return
+        self._load_request_seq += 1
+        self._active_load_request_id = self._load_request_seq
         self.clear_viewers()
         self.query_one("#status", Static).update(f"Loading: {path}")
         self.show_text(f"Loading file...\n{path}")
-        self.load_file_worker(path)
+        self.load_file_worker(path, self._active_load_request_id)
 
     def on_pickle_confirm(self, path: Path, confirmed: bool) -> None:
         if not confirmed:
@@ -632,8 +644,9 @@ class FilesViewerApp(App[None]):
         self.open_file(path)
 
     def clear_viewers(self) -> None:
-        table = self.query_one(DataTable)
+        table = self.query_one("#table", DataTable)
         schema_table = self.query_one("#schema_table", DataTable)
+        diag_table = self.query_one("#diag_table", DataTable)
         text = self.query_one(TextArea)
         filter_input = self.query_one("#table_filter_input", Input)
         log_preview = self.query_one("#log_text_preview", Static)
@@ -643,6 +656,7 @@ class FilesViewerApp(App[None]):
         db_schema_tree = self.query_one("#db_schema_tree", Tree)
         table.clear(columns=True)
         schema_table.clear(columns=True)
+        diag_table.clear(columns=True)
         text.text = ""
         log_preview.update("")
         log_preview.display = False
@@ -665,14 +679,15 @@ class FilesViewerApp(App[None]):
         filter_input.value = ""
 
     @work(thread=True)
-    def load_file_worker(self, path: Path) -> None:
+    def load_file_worker(self, path: Path, request_id: int) -> None:
         suffix = path.suffix.lower()
         try:
             cache_key = self.make_cache_key(path)
             cached = self.preview_cache.get(cache_key)
             if cached is not None:
                 self.cache_hits += 1
-                self.call_from_thread(self.apply_loaded_result, self.clone_cached_result(cached))
+                if request_id == self._active_load_request_id:
+                    self.call_from_thread(self.apply_loaded_result, self.clone_cached_result(cached), request_id)
                 return
             started = datetime.now()
             if suffix in {".xlsx", ".xls"}:
@@ -740,9 +755,10 @@ class FilesViewerApp(App[None]):
                 result = {"path": path, "kind": "text", "text": self.read_text_with_fallback(path)}
             self.preview_cache[cache_key] = result
             self.last_load_ms = int((datetime.now() - started).total_seconds() * 1000)
-            self.call_from_thread(self.apply_loaded_result, result)
+            if request_id == self._active_load_request_id:
+                self.call_from_thread(self.apply_loaded_result, result, request_id)
         except Exception as exc:
-            self.call_from_thread(self.handle_load_error, path, exc)
+            self.call_from_thread(self.handle_load_error, path, exc, request_id)
 
     def make_cache_key(self, path: Path) -> tuple[str, int, str]:
         stat = path.stat()
@@ -1563,7 +1579,9 @@ class FilesViewerApp(App[None]):
             "meta": meta,
         }
 
-    def apply_loaded_result(self, result: dict[str, Any]) -> None:
+    def apply_loaded_result(self, result: dict[str, Any], request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_load_request_id:
+            return
         path = result["path"]
         kind = result["kind"]
         self.current_path = path
@@ -1650,7 +1668,10 @@ class FilesViewerApp(App[None]):
         self.post_message(FileLoaded(path))
         self.update_status_details()
 
-    def handle_load_error(self, path: Path, exc: Exception) -> None:
+    def handle_load_error(self, path: Path, exc: Exception, request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_load_request_id:
+            return
+        self.log_diagnostic("load_error", path, exc)
         self.notify(f"Load failed: {exc}", severity="error")
         self.query_one("#status", Static).update(f"Failed to load: {path}")
         self.show_text(f"Failed to load file:\n{path}\n\n{type(exc).__name__}: {exc}")
@@ -1795,7 +1816,7 @@ class FilesViewerApp(App[None]):
             return
         df = self.current_df
         self.query_one(TabbedContent).active = "table_tab"
-        table = self.query_one(DataTable)
+        table = self.query_one("#table", DataTable)
         table.clear(columns=True)
         table.cursor_type = "cell"
 
@@ -2843,6 +2864,7 @@ class FilesViewerApp(App[None]):
             self.update_status_details()
             self.notify(f"Loaded table: {table_name}")
         except Exception as exc:
+            self.log_diagnostic("db_table_load_error", self.current_path, exc)
             self.notify(f"Failed to load table {table_name}: {exc}", severity="error")
 
     def populate_json_tree(self, node, value: Any) -> None:
@@ -3082,7 +3104,7 @@ class FilesViewerApp(App[None]):
         if self.lazy_delimited_context is not None:
             self.notify("Sort requires full mode. Press Alt+P (or F6) first.")
             return
-        table = self.query_one(DataTable)
+        table = self.query_one("#table", DataTable)
         coord = table.cursor_coordinate
         col_index = coord.column
         render_cols = self.get_render_columns(self.current_df)
@@ -3166,6 +3188,7 @@ class FilesViewerApp(App[None]):
             self.notify(f"Converted: {target}")
             self.query_one("#status", Static).update(f"Converted to: {target}")
         except Exception as exc:
+            self.log_diagnostic("convert_error", target, exc)
             self.notify(f"Convert failed: {exc}", severity="error")
 
     def refresh_file_tree(self) -> None:
@@ -3258,6 +3281,39 @@ class FilesViewerApp(App[None]):
             f"{path} | {suffix} | {kind} | {mode} | {size_text}{extra}{page_range} | {self.last_load_ms}ms{cache}{loading}"
         )
 
+    def log_diagnostic(self, category: str, path: Path | None, exc: Exception) -> None:
+        when = datetime.now().strftime("%H:%M:%S")
+        self.diagnostics.append(
+            {
+                "time": when,
+                "category": category,
+                "path": str(path) if path is not None else "-",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        # Keep only recent diagnostics
+        if len(self.diagnostics) > 200:
+            self.diagnostics = self.diagnostics[-200:]
+        self.render_diagnostics_table()
+
+    def render_diagnostics_table(self) -> None:
+        table = self.query_one("#diag_table", DataTable)
+        table.clear(columns=True)
+        table.add_column("time")
+        table.add_column("category")
+        table.add_column("path")
+        table.add_column("error")
+        if not self.diagnostics:
+            table.add_row("-", "-", "-", "No diagnostics")
+            return
+        for item in self.diagnostics[-200:]:
+            table.add_row(
+                item.get("time", "-"),
+                item.get("category", "-"),
+                self.truncate_profile_value(item.get("path", "-"), 60),
+                self.truncate_profile_value(item.get("error", "-"), 140),
+            )
+
     def action_focus_tree(self) -> None:
         self.query_one(ColoredDirectoryTree).focus()
 
@@ -3284,7 +3340,7 @@ class FilesViewerApp(App[None]):
             self.notify("Cell editing is available only for table files.")
             return
 
-        table = self.query_one(DataTable)
+        table = self.query_one("#table", DataTable)
         coord = table.cursor_coordinate
         row_index, col_index = coord.row, coord.column
         value = table.get_cell_at(coord)
@@ -3319,6 +3375,7 @@ class FilesViewerApp(App[None]):
             self.notify(f"Saved: {self.current_path}")
             self.query_one("#status", Static).update(f"Saved: {self.current_path}")
         except Exception as exc:
+            self.log_diagnostic("save_error", self.current_path, exc)
             self.notify(f"Save failed: {exc}", severity="error")
 
     def save_table(self, path: Path) -> None:
@@ -3367,20 +3424,25 @@ class FilesViewerApp(App[None]):
     def load_lazy_page_async(self, page_index: int) -> None:
         if self.lazy_delimited_context is None:
             return
+        self._lazy_page_request_seq += 1
+        self._active_lazy_page_request_id = self._lazy_page_request_seq
         self.is_page_loading = True
         self.update_status_details()
-        self.load_lazy_page_worker(page_index)
+        self.load_lazy_page_worker(page_index, self._active_lazy_page_request_id)
 
     @work(thread=True)
-    def load_lazy_page_worker(self, page_index: int) -> None:
+    def load_lazy_page_worker(self, page_index: int, request_id: int) -> None:
         try:
             df = self.read_lazy_delimited_page(page_index)
-            self.call_from_thread(self.on_lazy_page_loaded, df)
+            self.call_from_thread(self.on_lazy_page_loaded, df, request_id)
         except Exception as exc:
+            self.call_from_thread(self.log_diagnostic, "lazy_page_error", self.current_path, exc)
             self.call_from_thread(self.notify, f"Lazy page load failed: {exc}", severity="error")
-            self.call_from_thread(self.on_lazy_page_loaded, None)
+            self.call_from_thread(self.on_lazy_page_loaded, None, request_id)
 
-    def on_lazy_page_loaded(self, df: pd.DataFrame | None) -> None:
+    def on_lazy_page_loaded(self, df: pd.DataFrame | None, request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_lazy_page_request_id:
+            return
         if df is not None and self.lazy_delimited_context is not None:
             self.lazy_delimited_context["df"] = df
             if "columns" not in self.lazy_delimited_context:
