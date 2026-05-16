@@ -1,0 +1,37 @@
+﻿# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local tooling/editor
+.vscode/
+.idea/
+
+# Project-local helper scripts/docs (optional local files)
+cod.bat
+README.md
+example.xml
+pyproject.toml
+
+# Large/sample data files in viewer workspace
+src/files_viewer/*.avro
+src/files_viewer/*.pdf
+src/files_viewer/*.json
+src/files_viewer/*.pickle
+src/files_viewer/*.xlsx
+src/files_viewer/*.csv
+src/files_viewer/*.parquet
+src/files_viewer/*.orc
+src/files_viewer/*.gif
+src/files_viewer/*.html
+src/files_viewer/*.jpg
+src/files_viewer/*.png
+src/files_viewer/*.xml
+src/files_viewer/*.arrow
+src/files_viewer/*.db
+src/files_viewer/*.gz
+src/files_viewer/*.sql
+src/files_viewer/DOC.md
+src/files_viewer/cod.bat
+src/files_viewer/__init__.py
+.venv/
