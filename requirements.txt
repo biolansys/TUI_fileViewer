@@ -1,0 +1,16 @@
+﻿textual
+rich
+pandas
+numpy
+pyarrow
+openpyxl
+beautifulsoup4
+fastavro
+Pillow
+pypdf
+tzdata
+
+duckdb
+firebird-driver
+dbfread
+dbf
